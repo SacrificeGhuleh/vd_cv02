@@ -12,10 +12,34 @@ const float scale = 0.01;
 const uint16_t randRange = 10U;
 const uint16_t rsComputingIterations = 3U;
 
+#define MULTITHREAD 0
+
+#if MULTITHREAD
+  const int numThreads = 4;
+#endif
+
 std::random_device device;
 typedef std::mt19937 Engine;
 typedef std::uniform_real_distribution<double> Distribution;
 auto uniform_generator = std::bind(Distribution(0.0f, 1.0f), Engine(device()));
+
+
+class Timer {
+public:
+  Timer() : beg_(clock_::now()) {}
+  
+  void reset() { beg_ = clock_::now(); }
+  
+  double elapsed() const {
+    return std::chrono::duration_cast<second_>
+        (clock_::now() - beg_).count();
+  }
+
+private:
+  typedef std::chrono::high_resolution_clock clock_;
+  typedef std::chrono::duration<double, std::ratio<1> > second_;
+  std::chrono::time_point<clock_> beg_;
+};
 
 double random(const double range_min, const double range_max) {
   double ksi;
@@ -82,16 +106,16 @@ struct Quad {
   
   std::vector<cv::Point> points;
   
-  void debugDrawEdges(cv::Mat& mat){
+  void debugDrawEdges(cv::Mat &mat) {
     cv::line(mat, p1, p2, 0xff);
     cv::line(mat, p2, p3, 0xff);
     cv::line(mat, p3, p4, 0xff);
     cv::line(mat, p4, p1, 0xff);
   }
   
-  void debugDraw(cv::Mat& mat){
+  void debugDraw(cv::Mat &mat) {
     static int colorDebugCounter = 0;
-    for(const auto& point : points){
+    for (const auto &point : points) {
       mat.at<cv::Vec3b>(point) = colors[colorDebugCounter];
     }
     colorDebugCounter++;
@@ -106,8 +130,12 @@ struct Quad {
   }
   
   bool insideQuad(const cv::Point &p) {
+    
+    if (p.x < std::min(p1.x, p2.x) || p.x > std::max(p3.x, p4.x)) return false;
+    if (p.y < std::min(p1.y, p4.y) || p.y > std::max(p2.y, p3.y)) return false;
+    
     // TY HOVADO!
-    return insideTriangle(p, p1, p2, p3) || insideTriangle(p, p3, p4, p1) || insideTriangle(p, p1, p4, p2)  || insideTriangle(p, p2, p4, p3);
+    return insideTriangle(p, p1, p2, p3) || insideTriangle(p, p3, p4, p1) || insideTriangle(p, p1, p4, p2) || insideTriangle(p, p2, p4, p3);
   }
   
   static bool insideTriangle(const cv::Point &p, const cv::Point &p1, const cv::Point &p2, const cv::Point &p3) {
@@ -167,6 +195,9 @@ int main() {
     }
   }
   
+  #if MULTITHREAD
+    #pragma omp parallel for default(none) num_threads(numThreads) shared(gridPoints, imgSize)
+  #endif
   for (auto &point : gridPoints) {
     point.x += random(-randRange, randRange);
     point.y += random(-randRange, randRange);
@@ -175,6 +206,9 @@ int main() {
     point.y = std::clamp(point.y, 0, imgSize.height - 1);
   }
   
+  #if MULTITHREAD
+    #pragma omp parallel for default(none) num_threads(numThreads) shared(gridPoints, imgSize, gridSize, quads)
+  #endif
   for (int y = 0; y < gridSize.width; y++) {
     for (int x = 0; x < gridSize.height; x++) {
       const cv::Point &point = gridPoints.at(x * gridSize.width + y);
@@ -197,40 +231,47 @@ int main() {
         southPoint = point;
         southPoint.y += gridStep;
       }
-  
-      if (((x + 1) < gridSize.height)&&((y + 1) < gridSize.width )){
-        southEastPoint = gridPoints.at((x+1) * gridSize.width + (y + 1));
-      }
-      else{
+      
+      if (((x + 1) < gridSize.height) && ((y + 1) < gridSize.width)) {
+        southEastPoint = gridPoints.at((x + 1) * gridSize.width + (y + 1));
+      } else {
         southEastPoint.y = southPoint.y;
         southEastPoint.x = eastPoint.x;
       }
-      
-      quads.emplace_back(Quad(point, southPoint, southEastPoint, eastPoint));
+      #pragma omp critical
+      {
+        quads.emplace_back(Quad(point, southPoint, southEastPoint, eastPoint));
+      }
     }
   }
-  
+  Timer t;
+  #if MULTITHREAD
+    #pragma omp parallel for default(none) num_threads(numThreads) shared(quads, originalImage, reconstructedImage)
+  #endif
   for (int row = 0; row < originalImage.rows; row++) {
     for (int col = 0; col < originalImage.cols; col++) {
-      for(Quad& quad : quads){
+      for (Quad &quad : quads) {
         cv::Point pt = cv::Point(col, row);
-        if(quad.insideQuad(pt)){
-          quad.points.emplace_back(pt);
-  
-          cv::Point2f ptf =static_cast<cv::Point2f>(pt);
-          cv::Point2f p1f =static_cast<cv::Point2f>(quad.p1);
-          cv::Point2f p2f =static_cast<cv::Point2f>(quad.p2);
-          cv::Point2f p3f =static_cast<cv::Point2f>(quad.p3);
-          cv::Point2f p4f =static_cast<cv::Point2f>(quad.p4);
+        if (quad.insideQuad(pt)) {
+          #pragma omp critical
+          {
+            quad.points.emplace_back(pt);
+          }
           
-          cv::Vec<uint8_t,1> val1(originalImage.at<uint8_t>(p1f));
-          cv::Vec<uint8_t,1> val2(originalImage.at<uint8_t>(p2f));
-          cv::Vec<uint8_t,1> val3(originalImage.at<uint8_t>(p3f));
-          cv::Vec<uint8_t,1> val4(originalImage.at<uint8_t>(p4f));
+          cv::Point2f ptf = static_cast<cv::Point2f>(pt);
+          cv::Point2f p1f = static_cast<cv::Point2f>(quad.p1);
+          cv::Point2f p2f = static_cast<cv::Point2f>(quad.p2);
+          cv::Point2f p3f = static_cast<cv::Point2f>(quad.p3);
+          cv::Point2f p4f = static_cast<cv::Point2f>(quad.p4);
+          
+          cv::Vec<uint8_t, 1> val1(originalImage.at<uint8_t>(p1f));
+          cv::Vec<uint8_t, 1> val2(originalImage.at<uint8_t>(p2f));
+          cv::Vec<uint8_t, 1> val3(originalImage.at<uint8_t>(p3f));
+          cv::Vec<uint8_t, 1> val4(originalImage.at<uint8_t>(p4f));
           
           auto rsVect = computeRS(ptf, p1f, p2f, p3f, p4f);
-          cv::Vec<uint8_t,1> val = getTquad(rsVect[0], rsVect[1], val1, val2, val3, val4);
-  
+          cv::Vec<uint8_t, 1> val = getTquad(rsVect[0], rsVect[1], val1, val2, val3, val4);
+          
           reconstructedImage.at<uint8_t>(pt) = val[0];
           
           break;
@@ -239,8 +280,10 @@ int main() {
     }
   }
   
+  std::cout << "elapsed: " << t.elapsed() << std::endl;
   
-  for(Quad& quad : quads) {
+  
+  for (Quad &quad : quads) {
     quad.debugDrawEdges(originalImage);
   }
   
