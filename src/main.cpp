@@ -170,10 +170,10 @@ int main() {
   }
   
   
-  cv::Mat1b originalImage(imgSize, CV_8UC1);
-  cv::Mat3b originalColorImage(imgSize, CV_8UC3);
-  cv::Mat1b reconstructedImage(imgSize, CV_8UC1);
-  cv::Mat3b reconstructedColorImage(imgSize, CV_8UC3);
+  cv::Mat1b originalImage(imgSize);
+  cv::Mat3b originalColorImage(imgSize);
+  cv::Mat1b reconstructedImage(imgSize);
+  cv::Mat3b reconstructedColorImage(imgSize);
   
   std::vector<Quad> quads;
   std::vector<cv::Point2i> gridPoints;
