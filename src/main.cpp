@@ -9,13 +9,15 @@ const cv::Size imgSize = {1000U, 1000U};
 const uint16_t gridStep = 30U;
 const cv::Size gridSize = {(imgSize.width / gridStep) + 1, (imgSize.height / gridStep) + 1};
 const float scale = 0.01;
-const uint16_t randRange = 10U;
+const uint16_t randRange = 5U;
 const uint16_t rsComputingIterations = 3U;
 
 #define MULTITHREAD 0
 
+#define OPTIMIZED_POINT_CHECKING 1
+
 #if MULTITHREAD
-  const int numThreads = 4;
+const int numThreads = 4;
 #endif
 
 std::random_device device;
@@ -78,7 +80,7 @@ cv::Vec2f computeRS(const cv::Point2f &p, const cv::Vec2f &p1, const cv::Vec2f &
   cv::Mat1f J_inv(2, 2);
   cv::Vec2f T;
   
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < rsComputingIterations; i++) {
     J.at<float>(0, 0) = (rsVector[1] - 1) * (p1[0] - p2[0]) + rsVector[1] * (p3[0] - p4[0]);
     J.at<float>(1, 0) = (rsVector[1] - 1) * (p1[1] - p2[1]) + rsVector[1] * (p3[1] - p4[1]);
     J.at<float>(0, 1) = (rsVector[0] - 1) * (p1[0] - p4[0]) + rsVector[0] * (p3[0] - p2[0]);
@@ -131,8 +133,10 @@ struct Quad {
   
   bool insideQuad(const cv::Point &p) {
     
+    #if OPTIMIZED_POINT_CHECKING
     if (p.x < std::min(p1.x, p2.x) || p.x > std::max(p3.x, p4.x)) return false;
     if (p.y < std::min(p1.y, p4.y) || p.y > std::max(p2.y, p3.y)) return false;
+    #endif
     
     // TY HOVADO!
     return insideTriangle(p, p1, p2, p3) || insideTriangle(p, p3, p4, p1) || insideTriangle(p, p1, p4, p2) || insideTriangle(p, p2, p4, p3);
@@ -291,11 +295,13 @@ int main() {
   cv::imshow("originalImage", originalImage);
   cv::applyColorMap(originalImage, originalColorImage, cv::COLORMAP_JET);
   cv::imshow("originalColorImage", originalColorImage);
+  cv::imwrite("originalColorImage.png", originalColorImage);
   
   
   cv::imshow("reconstructedImage", reconstructedImage);
   cv::applyColorMap(reconstructedImage, reconstructedColorImage, cv::COLORMAP_JET);
   cv::imshow("reconstructedColorImage", reconstructedColorImage);
+  cv::imwrite("reconstructedColorImage.png", reconstructedColorImage);
   
   cv::waitKey();
   return 0;
